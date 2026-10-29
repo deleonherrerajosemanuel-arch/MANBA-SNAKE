@@ -28,7 +28,6 @@ def obtener_puntaje(matriz):
     return sum(1 for fila in matriz for celda in fila if celda > 0) - 3
 
 def procesar_movimiento(matriz, direccion):
-    # Retorna: (éxito_booleano, mensaje, tipo_de_evento_para_vibracion)
     hr, hc = -1, -1
     for r in range(10):
         for c in range(10):
@@ -97,7 +96,7 @@ def cargar_partida():
 
 # --- Interfaz de Streamlit ---
 
-st.title("🐍 Snake por Turnos (Gamepad Support)")
+st.title("🐍 Snake por Turnos (Manba V2 Support)")
 
 if 'matriz' not in st.session_state:
     st.session_state.matriz = None
@@ -106,7 +105,7 @@ if 'game_over' not in st.session_state:
 if 'mensaje' not in st.session_state:
     st.session_state.mensaje = ""
 if 'evento' not in st.session_state:
-    st.session_state.evento = "none" # Puede ser "none", "eat", o "crash"
+    st.session_state.evento = "none"
 
 if st.session_state.matriz is None:
     col1, col2 = st.columns(2)
@@ -183,7 +182,7 @@ else:
                 st.session_state.mensaje = f"Fin del juego. {msg}"
             st.rerun()
         else:
-            st.session_state.evento = "none" # Reiniciar evento si no hay movimiento
+            st.session_state.evento = "none"
             
         if btn_g:
             guardar_partida(st.session_state.matriz)
@@ -196,69 +195,78 @@ else:
             st.session_state.matriz = None
             st.rerun()
 
-# --- Inyección de API Gamepad y Motor de Vibración ---
+# --- Conexión Nativa para Mando y Hápticos ---
 js_code = f"""
 <script>
-const doc = window.parent.document;
-const currentEvent = "{st.session_state.evento}";
+(function() {{
+    const topWin = window.parent;
+    const doc = topWin.document;
+    const currentEvent = "{st.session_state.evento}";
 
-// Función para enviar force feedback al control
-function vibrateGamepad(type) {{
-    const gamepads = navigator.getGamepads();
-    const gp = gamepads.find(g => g !== null);
-    if (gp && gp.vibrationActuator) {{
-        if (type === 'eat') {{
-            // Vibración sutil del motor débil al comer
-            gp.vibrationActuator.playEffect("dual-rumble", {{
-                startDelay: 0, duration: 150, weakMagnitude: 0.6, strongMagnitude: 0.0
-            }});
-        }} else if (type === 'crash') {{
-            // Vibración fuerte de ambos motores al chocar
-            gp.vibrationActuator.playEffect("dual-rumble", {{
-                startDelay: 0, duration: 500, weakMagnitude: 1.0, strongMagnitude: 1.0
-            }});
-        }}
-    }}
-}}
-
-// Disparar vibración inmediatamente si ocurrió un evento en este turno
-if (currentEvent !== "none") {{
-    vibrateGamepad(currentEvent);
-}}
-
-// Bucle de lectura continua del control (60 veces por segundo)
-if (!window.parent.manbaConnected) {{
-    window.parent.manbaConnected = true;
-    let lastPress = 0;
-    
-    function updateLoop() {{
-        const gamepads = navigator.getGamepads();
-        const gp = gamepads.find(g => g !== null);
-        
-        if (gp) {{
-            const now = Date.now();
-            // Retraso de 250ms entre movimientos para que la serpiente no vuele fuera de control
-            if (now - lastPress > 250) {{ 
-                const buttons = Array.from(doc.querySelectorAll('button'));
-                const btnW = buttons.find(el => el.innerText.includes('W'));
-                const btnA = buttons.find(el => el.innerText.includes('A'));
-                const btnS = buttons.find(el => el.innerText.includes('S'));
-                const btnD = buttons.find(el => el.innerText.includes('D'));
-
-                let pressed = false;
-                // Detecta tanto el D-Pad (botones 12 a 15) como el Joystick Izquierdo (ejes 0 y 1)
-                if ((gp.buttons[12]?.pressed || gp.axes[1] < -0.5) && btnW) {{ btnW.click(); pressed = true; }}
-                else if ((gp.buttons[13]?.pressed || gp.axes[1] > 0.5) && btnS) {{ btnS.click(); pressed = true; }}
-                else if ((gp.buttons[14]?.pressed || gp.axes[0] < -0.5) && btnA) {{ btnA.click(); pressed = true; }}
-                else if ((gp.buttons[15]?.pressed || gp.axes[0] > 0.5) && btnD) {{ btnD.click(); pressed = true; }}
-                
-                if (pressed) lastPress = now;
+    // Sistema de Vibración Nivel 2
+    function triggerHaptic(type) {{
+        const gps = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+        for (let gp of gps) {{
+            if (gp && gp.vibrationActuator) {{
+                if (type === 'eat') {{
+                    gp.vibrationActuator.playEffect("dual-rumble", {{
+                        startDelay: 0, duration: 180, weakMagnitude: 0.8, strongMagnitude: 0.2
+                    }});
+                }} else if (type === 'crash') {{
+                    gp.vibrationActuator.playEffect("dual-rumble", {{
+                        startDelay: 0, duration: 600, weakMagnitude: 1.0, strongMagnitude: 1.0
+                    }});
+                }}
             }}
         }}
-        requestAnimationFrame(updateLoop);
     }}
-    requestAnimationFrame(updateLoop);
-}}
+
+    if (currentEvent !== "none") {{
+        triggerHaptic(currentEvent);
+    }}
+
+    // Bucle Global en la Ventana Principal para evitar el aislamiento del Iframe
+    if (!topWin.manbaLoopRunning) {{
+        topWin.manbaLoopRunning = true;
+        let lastPressTime = 0;
+
+        function gameLoop() {{
+            const gps = (topWin.navigator.getGamepads ? topWin.navigator.getGamepads() : []) || [];
+            let gp = null;
+            for (let g of gps) {{
+                if (g) {{ gp = g; break; }}
+            }}
+
+            if (gp) {{
+                const now = Date.now();
+                if (now - lastPressTime > 220) {{
+                    const buttons = Array.from(doc.querySelectorAll('button'));
+                    const btnW = buttons.find(el => el.innerText.includes('W'));
+                    const btnA = buttons.find(el => el.innerText.includes('A'));
+                    const btnS = buttons.find(el => el.innerText.includes('S'));
+                    const btnD = buttons.find(el => el.innerText.includes('D'));
+
+                    let pressed = false;
+
+                    // Mapeo XInput/DirectInput para Manba V2 (Cruceta + Joystick)
+                    const upPressed = (gp.buttons[12] && gp.buttons[12].pressed) || (gp.axes[1] && gp.axes[1] < -0.4);
+                    const downPressed = (gp.buttons[13] && gp.buttons[13].pressed) || (gp.axes[1] && gp.axes[1] > 0.4);
+                    const leftPressed = (gp.buttons[14] && gp.buttons[14].pressed) || (gp.axes[0] && gp.axes[0] < -0.4);
+                    const rightPressed = (gp.buttons[15] && gp.buttons[15].pressed) || (gp.axes[0] && gp.axes[0] > 0.4);
+
+                    if (upPressed && btnW) {{ btnW.click(); pressed = true; }}
+                    else if (downPressed && btnS) {{ btnS.click(); pressed = true; }}
+                    else if (leftPressed && btnA) {{ btnA.click(); pressed = true; }}
+                    else if (rightPressed && btnD) {{ btnD.click(); pressed = true; }}
+
+                    if (pressed) lastPressTime = now;
+                }}
+            }}
+            topWin.requestAnimationFrame(gameLoop);
+        }}
+        topWin.requestAnimationFrame(gameLoop);
+    }}
+}})();
 </script>
 """
 components.html(js_code, height=0, width=0)
